@@ -166,11 +166,10 @@ NOTE(record_not_automatically_importable, none, "record '%0' is not "
 NOTE(projection_not_imported, none, "C++ method '%0' that returns unsafe "
                                     "projection of type '%1' not imported",
      (StringRef, StringRef))
-NOTE(dont_use_iterator_api, none, "C++ method '%0' that returns an unsafe "
-                                  "iterator not imported: use Swift Sequence "
-                                  "APIs instead",
+ERROR(dont_use_iterator_api, none, "'%0' is unavailable in Swift as it returns a C++ iterator. "
+                                   "Use 'for-in' loop or 'Sequence' methods such as 'map', "
+                                   "'reduce' to iterate over the collection.",
      (StringRef))
-
 ERROR(reference_type_must_have_retain_attr,none,
       "reference type '%0' must have 'retain:' swift attribute.", (StringRef))
 ERROR(reference_type_must_have_release_attr,none,
