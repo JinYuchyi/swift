@@ -30,6 +30,7 @@ public func test(x: M) {
   x.test2()
   // CHECK: note: C++ method 'test3' that returns unsafe projection of type 'Ptr' not imported
   x.test3()
-  // CHECK: error: 'begin' is unavailable in Swift as it returns a C++ iterator. Use 'for-in' loop or 'Sequence' methods such as 'map', 'reduce' to iterate over the collection
+  // CHECK: error: value of type 'M' has no member 'begin'
+  // CHECK: error: 'begin' is unavailable in Swift as it returns a C++ iterator. Use 'for-in' loop or 'Sequence' methods such as 'map', 'reduce' to iterate over the collection.
   x.begin()
 }

@@ -81,7 +81,7 @@ ERROR(cannot_infer_keypath_root_anykeypath_context,none,
      "'AnyKeyPath' does not provide enough context for root type to be inferred; "
      "consider explicitly specifying a root type", ())
 
-ERROR(could_not_find_type_member,none,
+NOTE(could_not_find_type_member,none,
       "type %0 has no member %1", (Type, DeclNameRef))
 ERROR(could_not_find_type_member_corrected,none,
       "type %0 has no member %1; did you mean %2?",
