@@ -1162,9 +1162,10 @@ ModuleFile::getGenericSignatureChecked(serialization::GenericSignatureID ID) {
       auto paramTy = getType(rawParamIDs[i+1])->castTo<GenericTypeParamType>();
 
       if (!name.empty()) {
-        auto paramDecl = GenericTypeParamDecl::create(
-            getAssociatedModule(), name, SourceLoc(), paramTy->isTypeSequence(),
-            paramTy->getDepth(), paramTy->getIndex(), false, nullptr);
+        auto *paramDecl = GenericTypeParamDecl::createDeserialized(
+            getAssociatedModule(), name, paramTy->getDepth(),
+            paramTy->getIndex(), paramTy->isParameterPack(),
+            /*isOpaqueType*/ false);
         paramTy = paramDecl->getDeclaredInterfaceType()
                    ->castTo<GenericTypeParamType>();
       }
@@ -2823,21 +2824,21 @@ public:
                                   StringRef blobData) {
     IdentifierID nameID;
     bool isImplicit;
-    bool isTypeSequence;
+    bool isParameterPack;
     unsigned depth;
     unsigned index;
     bool isOpaqueType;
 
     decls_block::GenericTypeParamDeclLayout::readRecord(
-        scratch, nameID, isImplicit, isTypeSequence, depth, index,
+        scratch, nameID, isImplicit, isParameterPack, depth, index,
         isOpaqueType);
 
     // Always create GenericTypeParamDecls in the associated file; the real
     // context will reparent them.
     auto *DC = MF.getFile();
-    auto genericParam = GenericTypeParamDecl::create(
-        DC, MF.getIdentifier(nameID), SourceLoc(), isTypeSequence, depth,
-        index, isOpaqueType, /*opaqueTypeRepr=*/nullptr);
+    auto *genericParam = GenericTypeParamDecl::createDeserialized(
+        DC, MF.getIdentifier(nameID), depth, index, isParameterPack,
+        isOpaqueType);
     declOrOffset = genericParam;
 
     if (isImplicit)
@@ -5877,13 +5878,13 @@ Expected<Type> DESERIALIZE_TYPE(OPAQUE_ARCHETYPE_TYPE)(
                                       subsOrError.get());
 }
 
-Expected<Type> DESERIALIZE_TYPE(SEQUENCE_ARCHETYPE_TYPE)(
+Expected<Type> DESERIALIZE_TYPE(PACK_ARCHETYPE_TYPE)(
     ModuleFile &MF, SmallVectorImpl<uint64_t> &scratch, StringRef blobData) {
   GenericSignatureID sigID;
   TypeID interfaceTypeID;
 
-  decls_block::SequenceArchetypeTypeLayout::readRecord(scratch, sigID,
-                                                       interfaceTypeID);
+  decls_block::PackArchetypeTypeLayout::readRecord(scratch, sigID,
+                                                   interfaceTypeID);
 
   auto sig = MF.getGenericSignature(sigID);
   if (!sig)
@@ -5902,12 +5903,12 @@ Expected<Type> DESERIALIZE_TYPE(SEQUENCE_ARCHETYPE_TYPE)(
 Expected<Type>
 DESERIALIZE_TYPE(GENERIC_TYPE_PARAM_TYPE)(
     ModuleFile &MF, SmallVectorImpl<uint64_t> &scratch, StringRef blobData) {
-  bool typeSequence;
+  bool parameterPack;
   DeclID declIDOrDepth;
   unsigned indexPlusOne;
 
   decls_block::GenericTypeParamTypeLayout::readRecord(
-      scratch, typeSequence, declIDOrDepth, indexPlusOne);
+      scratch, parameterPack, declIDOrDepth, indexPlusOne);
 
   if (indexPlusOne == 0) {
     auto genericParam =
@@ -5919,7 +5920,7 @@ DESERIALIZE_TYPE(GENERIC_TYPE_PARAM_TYPE)(
     return genericParam->getDeclaredInterfaceType();
   }
 
-  return GenericTypeParamType::get(typeSequence, declIDOrDepth,
+  return GenericTypeParamType::get(parameterPack, declIDOrDepth,
                                    indexPlusOne - 1, MF.getContext());
 }
 

@@ -2140,15 +2140,6 @@ public:
     }
     PrintWithColorRAII(OS, ParenthesisColor) << ')';
   }
-  void visitPackExpr(PackExpr *E) {
-    printCommon(E, "pack_expr");
-
-    for (unsigned i = 0, e = E->getNumElements(); i != e; ++i) {
-      OS << '\n';
-      printRec(E->getElement(i));
-    }
-    PrintWithColorRAII(OS, ParenthesisColor) << ')';
-  }
   void visitArrayExpr(ArrayExpr *E) {
     printCommon(E, "array_expr");
     PrintWithColorRAII(OS, LiteralValueColor) << " initializer=";
@@ -2292,11 +2283,6 @@ public:
   }
   void visitBridgeToObjCExpr(BridgeToObjCExpr *E) {
     printCommon(E, "bridge_to_objc_expr") << '\n';
-    printRec(E->getSubExpr());
-    PrintWithColorRAII(OS, ParenthesisColor) << ')';
-  }
-  void visitReifyPackExpr(ReifyPackExpr *E) {
-    printCommon(E, "reify_pack") << '\n';
     printRec(E->getSubExpr());
     PrintWithColorRAII(OS, ParenthesisColor) << ')';
   }
@@ -3734,9 +3720,7 @@ namespace {
       printField("num_elements", T->getNumElements());
       Indent += 2;
       for (Type elt : T->getElementTypes()) {
-        OS.indent(Indent) << "(";
         printRec(elt);
-        OS << ")";
       }
       Indent -= 2;
       PrintWithColorRAII(OS, ParenthesisColor) << ')';
@@ -3744,8 +3728,8 @@ namespace {
 
     void visitPackExpansionType(PackExpansionType *T, StringRef label) {
       printCommon(label, "pack_expansion_type");
-      printField("pattern", T->getPatternType());
-      printField("count", T->getCountType());
+      printRec("pattern", T->getPatternType());
+      printRec("count", T->getCountType());
       PrintWithColorRAII(OS, ParenthesisColor) << ')';
     }
 
@@ -3891,8 +3875,8 @@ namespace {
       }
       PrintWithColorRAII(OS, ParenthesisColor) << ')';
     }
-    void visitSequenceArchetypeType(SequenceArchetypeType *T, StringRef label) {
-      printArchetypeCommon(T, "sequence_archetype_type", label);
+    void visitPackArchetypeType(PackArchetypeType *T, StringRef label) {
+      printArchetypeCommon(T, "pack_archetype_type", label);
       printField("name", T->getFullName());
       OS << "\n";
       PrintWithColorRAII(OS, ParenthesisColor) << ')';

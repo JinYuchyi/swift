@@ -352,7 +352,7 @@ struct ASTContext::Implementation {
       ExistentialSignatures;
 
   /// The element signature for a generic signature, constructed by dropping
-  /// @_typeSequence attributes from generic parameters.
+  /// the parameter pack bit from generic parameters.
   llvm::DenseMap<const GenericSignatureImpl *,
                  CanGenericSignature> ElementSignatures;
 
@@ -3135,6 +3135,15 @@ TupleType *TupleType::get(ArrayRef<TupleTypeElt> Fields, const ASTContext &C) {
     properties |= eltTy->getRecursiveProperties();
   }
 
+  // Enforce an invariant.
+  for (unsigned i = 0, e = Fields.size(); i < e; ++i) {
+    if (Fields[i].getType()->is<PackExpansionType>()) {
+      assert(i == e - 1 || Fields[i + 1].hasName() &&
+             "Tuple element with pack expansion type cannot be followed "
+             "by an unlabeled element");
+    }
+  }
+
   auto arena = getArena(properties);
 
   void *InsertPos = nullptr;
@@ -3173,9 +3182,15 @@ PackExpansionType::PackExpansionType(Type patternType, Type countType,
                                      const ASTContext *canCtx)
   : TypeBase(TypeKind::PackExpansion, canCtx, properties),
     patternType(patternType), countType(countType) {
-  assert(countType->is<TypeVariableType>() ||
-         countType->is<SequenceArchetypeType>() ||
-         countType->castTo<GenericTypeParamType>()->isTypeSequence());
+
+  // TODO: it would be nice if the solver didn't stick PlaceholderTypes and
+  // UnresolvedTypes in here.
+  assert(countType->is<PackType>() ||
+         countType->is<TypeVariableType>() ||
+         countType->is<PackArchetypeType>() ||
+         countType->is<PlaceholderType>() ||
+         countType->is<UnresolvedType>() ||
+         countType->castTo<GenericTypeParamType>()->isParameterPack());
 }
 
 PackExpansionType *PackExpansionType::get(Type patternType, Type countType) {
@@ -3221,9 +3236,9 @@ PackType *PackType::get(const ASTContext &C, ArrayRef<Type> elements) {
   bool isCanonical = true;
   for (Type eltTy : elements) {
     assert(!eltTy->isTypeParameter() ||
-           !eltTy->getRootGenericParam()->isTypeSequence() &&
+           !eltTy->getRootGenericParam()->isParameterPack() &&
            "Pack type parameter outside of a pack expansion");
-    assert(!eltTy->is<SequenceArchetypeType>() &&
+    assert(!eltTy->is<PackArchetypeType>() &&
            "Pack type archetype outside of a pack expansion");
     assert(!eltTy->is<PackType>() &&
            "Cannot have pack directly inside another pack");
@@ -4118,20 +4133,20 @@ GenericFunctionType::GenericFunctionType(
   }
 }
 
-GenericTypeParamType *GenericTypeParamType::get(bool isTypeSequence,
+GenericTypeParamType *GenericTypeParamType::get(bool isParameterPack,
                                                 unsigned depth, unsigned index,
                                                 const ASTContext &ctx) {
-  const auto depthKey = depth | ((isTypeSequence ? 1 : 0) << 30);
+  const auto depthKey = depth | ((isParameterPack ? 1 : 0) << 30);
   auto known = ctx.getImpl().GenericParamTypes.find({depthKey, index});
   if (known != ctx.getImpl().GenericParamTypes.end())
     return known->second;
 
   RecursiveTypeProperties props = RecursiveTypeProperties::HasTypeParameter;
-  if (isTypeSequence)
-    props |= RecursiveTypeProperties::HasTypeSequence;
+  if (isParameterPack)
+    props |= RecursiveTypeProperties::HasParameterPack;
 
   auto result = new (ctx, AllocationArena::Permanent)
-      GenericTypeParamType(isTypeSequence, depth, index, props, ctx);
+      GenericTypeParamType(isParameterPack, depth, index, props, ctx);
   ctx.getImpl().GenericParamTypes[{depthKey, index}] = result;
   return result;
 }
@@ -5459,10 +5474,8 @@ GenericParamList *ASTContext::getSelfGenericParamList(DeclContext *dc) const {
   // Note: we always return a GenericParamList rooted at the first
   // DeclContext this was called with. Since this is just a giant
   // hack for SIL mode, that should be OK.
-  auto *selfParam = GenericTypeParamDecl::create(
-      dc, Id_Self, SourceLoc(),
-      /*isTypeSequence=*/false, /*depth=*/0, /*index=*/0,
-      /*isOpaqueType=*/false, /*opaqueTypeRepr=*/nullptr);
+  auto *selfParam = GenericTypeParamDecl::createImplicit(
+      dc, Id_Self, /*depth*/ 0, /*index*/ 0);
 
   theParamList = GenericParamList::create(
       const_cast<ASTContext &>(*this), SourceLoc(), {selfParam}, SourceLoc());
@@ -5475,7 +5488,7 @@ CanGenericSignature ASTContext::getSingleGenericParameterSignature() const {
   if (auto theSig = getImpl().SingleGenericParameterSignature)
     return theSig;
 
-  auto param = GenericTypeParamType::get(/*type sequence*/ false,
+  auto param = GenericTypeParamType::get(/*isParameterPack*/ false,
                                          /*depth*/ 0, /*index*/ 0, *this);
   auto sig = GenericSignature::get(param, { });
   auto canonicalSig = CanGenericSignature(sig);
@@ -5488,7 +5501,7 @@ Type OpenedArchetypeType::getSelfInterfaceTypeFromContext(GenericSignature paren
   unsigned depth = 0;
   if (!parentSig.getGenericParams().empty())
     depth = parentSig.getGenericParams().back()->getDepth() + 1;
-  return GenericTypeParamType::get(/*isTypeSequence=*/ false,
+  return GenericTypeParamType::get(/*isParameterPack=*/ false,
                                    /*depth=*/ depth, /*index=*/ 0,
                                    ctx);
 }
@@ -5555,7 +5568,7 @@ ASTContext::getOpenedElementSignature(CanGenericSignature baseGenericSig) {
     auto found = std::find_if(baseGenericSig.getGenericParams().begin(),
                               baseGenericSig.getGenericParams().end(),
                               [](GenericTypeParamType *paramType) {
-                                return paramType->isTypeSequence();
+                                return paramType->isParameterPack();
                               });
     assert(found != baseGenericSig.getGenericParams().end());
   }
@@ -5564,20 +5577,20 @@ ASTContext::getOpenedElementSignature(CanGenericSignature baseGenericSig) {
   SmallVector<GenericTypeParamType *, 2> genericParams;
   SmallVector<Requirement, 2> requirements;
 
-  auto eraseTypeSequence = [&](GenericTypeParamType *paramType) {
+  auto eraseParameterPack = [&](GenericTypeParamType *paramType) {
     return GenericTypeParamType::get(
         paramType->getDepth(), paramType->getIndex(),
-        /*isTypeSequence=*/false, *this);
+        /*isParameterPack=*/false, *this);
   };
 
   for (auto paramType : baseGenericSig.getGenericParams()) {
-    genericParams.push_back(eraseTypeSequence(paramType));
+    genericParams.push_back(eraseParameterPack(paramType));
   }
 
-  auto eraseTypeSequenceRec = [&](Type type) -> Type {
+  auto eraseParameterPackRec = [&](Type type) -> Type {
     return type.transformRec([&](Type t) -> Optional<Type> {
       if (auto *paramType = t->getAs<GenericTypeParamType>())
-        return Type(eraseTypeSequence(paramType));
+        return Type(eraseParameterPack(paramType));
       return None;
     });
   };
@@ -5592,13 +5605,13 @@ ASTContext::getOpenedElementSignature(CanGenericSignature baseGenericSig) {
     case RequirementKind::SameType:
       requirements.emplace_back(
           requirement.getKind(),
-          eraseTypeSequenceRec(requirement.getFirstType()),
-          eraseTypeSequenceRec(requirement.getSecondType()));
+          eraseParameterPackRec(requirement.getFirstType()),
+          eraseParameterPackRec(requirement.getSecondType()));
       break;
     case RequirementKind::Layout:
       requirements.emplace_back(
           requirement.getKind(),
-          eraseTypeSequenceRec(requirement.getFirstType()),
+          eraseParameterPackRec(requirement.getFirstType()),
           requirement.getLayoutConstraint());
       break;
     }

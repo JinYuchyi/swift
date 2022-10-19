@@ -446,7 +446,6 @@ namespace {
              CollectionUpcastConversionExpr *E,
              SGFContext C);
     RValue visitBridgeToObjCExpr(BridgeToObjCExpr *E, SGFContext C);
-    RValue visitReifyPackExpr(ReifyPackExpr *E, SGFContext C);
     RValue visitPackExpansionExpr(PackExpansionExpr *E, SGFContext C);
     RValue visitBridgeFromObjCExpr(BridgeFromObjCExpr *E, SGFContext C);
     RValue visitConditionalBridgeFromObjCExpr(ConditionalBridgeFromObjCExpr *E,
@@ -475,7 +474,6 @@ namespace {
     RValue visitCoerceExpr(CoerceExpr *E, SGFContext C);
     RValue visitUnderlyingToOpaqueExpr(UnderlyingToOpaqueExpr *E, SGFContext C);
     RValue visitTupleExpr(TupleExpr *E, SGFContext C);
-    RValue visitPackExpr(PackExpr *E, SGFContext C);
     RValue visitMemberRefExpr(MemberRefExpr *E, SGFContext C);
     RValue visitDynamicMemberRefExpr(DynamicMemberRefExpr *E, SGFContext C);
     RValue visitDotSyntaxBaseIgnoredExpr(DotSyntaxBaseIgnoredExpr *E,
@@ -1446,7 +1444,7 @@ RValueEmitter::visitConditionalBridgeFromObjCExpr(
   auto conversion = cast<FuncDecl>(conversionRef.getDecl());
   auto subs = conversionRef.getSubstitutions();
 
-  auto nativeType = Type(GenericTypeParamType::get(/*type sequence*/ false,
+  auto nativeType = Type(GenericTypeParamType::get(/*isParameterPack*/ false,
                                                    /*depth*/ 0, /*index*/ 0,
                                                    SGF.getASTContext()))
                         .subst(subs);
@@ -1511,11 +1509,6 @@ RValueEmitter::visitBridgeToObjCExpr(BridgeToObjCExpr *E, SGFContext C) {
   auto result = SGF.emitNativeToBridgedValue(E, mv, origType, resultType,
                                              loweredResultTy, C);
   return RValue(SGF, E, result);
-}
-
-RValue
-RValueEmitter::visitReifyPackExpr(ReifyPackExpr *E, SGFContext C) {
-  llvm_unreachable("Unimplemented!");
 }
 
 RValue
@@ -2306,10 +2299,6 @@ RValue RValueEmitter::visitTupleExpr(TupleExpr *E, SGFContext C) {
   }
 
   return result;
-}
-
-RValue RValueEmitter::visitPackExpr(PackExpr *E, SGFContext C) {
-  llvm_unreachable("Unimplemented!");
 }
 
 RValue RValueEmitter::visitMemberRefExpr(MemberRefExpr *e,
@@ -3339,7 +3328,7 @@ getOrCreateKeyPathEqualsAndHash(SILGenModule &SGM,
       // Get the Equatable conformance from the Hashable conformance.
       auto equatable = hashable.getAssociatedConformance(
           formalTy,
-          GenericTypeParamType::get(/*type sequence*/ false,
+          GenericTypeParamType::get(/*isParameterPack*/ false,
                                     /*depth*/ 0, /*index*/ 0, C),
           equatableProtocol);
 

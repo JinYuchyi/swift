@@ -505,7 +505,7 @@ protected:
 
     Depth : 16,
     Index : 16,
-    TypeSequence : 1,
+    ParameterPack : 1,
 
     /// Whether this generic parameter represents an opaque type.
     IsOpaqueType : 1
@@ -2733,6 +2733,11 @@ public:
   /// 'func foo(Int) -> () -> Self?'.
   GenericParameterReferenceInfo findExistentialSelfReferences(
       Type baseTy, bool treatNonResultCovariantSelfAsInvariant) const;
+
+  /// Returns a synthesized declaration for a query function that provides
+  /// the boolean value for a `if #_hasSymbol(...)` condition. The interface
+  /// type of the function is `() -> Builtin.Int1`.
+  FuncDecl *getHasSymbolQueryDecl() const;
 };
 
 /// This is a common base class for declarations which declare a type.
@@ -3161,13 +3166,18 @@ public:
 /// \code
 /// func min<T : Comparable>(x : T, y : T) -> T { ... }
 /// \endcode
-class GenericTypeParamDecl final :
-    public AbstractTypeParamDecl,
-    private llvm::TrailingObjects<GenericTypeParamDecl, TypeRepr *>{
+class GenericTypeParamDecl final
+    : public AbstractTypeParamDecl,
+      private llvm::TrailingObjects<GenericTypeParamDecl, TypeRepr *,
+                                    SourceLoc> {
   friend TrailingObjects;
 
-  size_t numTrailingObjects(OverloadToken<OpaqueReturnTypeRepr *>) const {
+  size_t numTrailingObjects(OverloadToken<TypeRepr *>) const {
     return isOpaqueType() ? 1 : 0;
+  }
+
+  size_t numTrailingObjects(OverloadToken<SourceLoc>) const {
+    return isParameterPack() ? 1 : 0;
   }
 
   /// Construct a new generic type parameter.
@@ -3178,11 +3188,20 @@ class GenericTypeParamDecl final :
   ///
   /// \param name The name of the generic parameter.
   /// \param nameLoc The location of the name.
+  /// \param ellipsisLoc The location of the ellipsis for a type parameter pack.
+  /// \param depth The generic signature depth.
+  /// \param index The index of the parameter in the generic signature.
+  /// \param isParameterPack Whether the generic parameter is for a type
+  ///                        parameter pack, denoted by \c <T...>.
+  /// \param isOpaqueType Whether the generic parameter is written as an opaque
+  ///                     parameter e.g 'some Collection'.
+  /// \param opaqueTypeRepr The TypeRepr of an opaque generic parameter.
+  ///
   GenericTypeParamDecl(DeclContext *dc, Identifier name, SourceLoc nameLoc,
-                       bool isTypeSequence, unsigned depth, unsigned index,
-                       bool isOpaqueType, TypeRepr *typeRepr);
+                       SourceLoc ellipsisLoc, unsigned depth, unsigned index,
+                       bool isParameterPack, bool isOpaqueType,
+                       TypeRepr *opaqueTypeRepr);
 
-public:
   /// Construct a new generic type parameter.
   ///
   /// \param dc The DeclContext in which the generic type parameter's owner
@@ -3191,17 +3210,91 @@ public:
   ///
   /// \param name The name of the generic parameter.
   /// \param nameLoc The location of the name.
-  GenericTypeParamDecl(DeclContext *dc, Identifier name, SourceLoc nameLoc,
-                       bool isTypeSequence, unsigned depth, unsigned index)
-      : GenericTypeParamDecl(dc, name, nameLoc, isTypeSequence, depth, index,
-                             false, nullptr) { }
+  /// \param ellipsisLoc The location of the ellipsis for a type parameter pack.
+  /// \param depth The generic signature depth.
+  /// \param index The index of the parameter in the generic signature.
+  /// \param isParameterPack Whether the generic parameter is for a type
+  ///                        parameter pack, denoted by \c <T...>.
+  /// \param isOpaqueType Whether the generic parameter is written as an opaque
+  ///                     parameter e.g 'some Collection'.
+  /// \param opaqueTypeRepr The TypeRepr of an opaque generic parameter.
+  ///
+  static GenericTypeParamDecl *create(DeclContext *dc, Identifier name,
+                                      SourceLoc nameLoc, SourceLoc ellipsisLoc,
+                                      unsigned depth, unsigned index,
+                                      bool isParameterPack, bool isOpaqueType,
+                                      TypeRepr *opaqueTypeRepr);
 
+public:
   static const unsigned InvalidDepth = 0xFFFF;
 
+  /// Construct a new generic type parameter. This should only be used by the
+  /// ClangImporter, use \c GenericTypeParamDecl::create[...] instead.
+  GenericTypeParamDecl(DeclContext *dc, Identifier name, SourceLoc nameLoc,
+                       SourceLoc ellipsisLoc, unsigned depth, unsigned index,
+                       bool isParameterPack)
+      : GenericTypeParamDecl(dc, name, nameLoc, ellipsisLoc, depth, index,
+                             isParameterPack, /*isOpaqueType*/ false, nullptr) {
+  }
+
+  /// Construct a deserialized generic type parameter.
+  ///
+  /// \param dc The DeclContext in which the generic type parameter's owner
+  /// occurs. This should later be overwritten with the actual declaration
+  /// context that owns the type parameter.
+  ///
+  /// \param name The name of the generic parameter.
+  /// \param depth The generic signature depth.
+  /// \param index The index of the parameter in the generic signature.
+  /// \param isParameterPack Whether the generic parameter is for a type
+  ///                        parameter pack, denoted by \c <T...>.
+  /// \param isOpaqueType Whether the generic parameter is written as an opaque
+  ///                     parameter e.g 'some Collection'.
+  ///
   static GenericTypeParamDecl *
-  create(DeclContext *dc, Identifier name, SourceLoc nameLoc,
-         bool isTypeSequence, unsigned depth, unsigned index,
-         bool isOpaqueType, TypeRepr *typeRepr);
+  createDeserialized(DeclContext *dc, Identifier name, unsigned depth,
+                     unsigned index, bool isParameterPack, bool isOpaqueType);
+
+  /// Construct a new parsed generic type parameter.
+  ///
+  /// \param dc The DeclContext in which the generic type parameter's owner
+  /// occurs. This should later be overwritten with the actual declaration
+  /// context that owns the type parameter.
+  ///
+  /// \param name The name of the generic parameter.
+  /// \param nameLoc The location of the name.
+  /// \param ellipsisLoc The location of the ellipsis for a type parameter pack.
+  /// \param index The index of the parameter in the generic signature.
+  /// \param isParameterPack Whether the generic parameter is for a type
+  ///                        parameter pack, denoted by \c <T...>.
+  ///
+  static GenericTypeParamDecl *
+  createParsed(DeclContext *dc, Identifier name, SourceLoc nameLoc,
+               SourceLoc ellipsisLoc, unsigned index, bool isParameterPack);
+
+  /// Construct a new implicit generic type parameter.
+  ///
+  /// \param dc The DeclContext in which the generic type parameter's owner
+  /// occurs. This should later be overwritten with the actual declaration
+  /// context that owns the type parameter.
+  ///
+  /// \param name The name of the generic parameter.
+  /// \param depth The generic signature depth.
+  /// \param index The index of the parameter in the generic signature.
+  /// \param isParameterPack Whether the generic parameter is for a type
+  ///                        parameter pack, denoted by \c <T...>.
+  /// \param isOpaqueType Whether the generic parameter is written as an opaque
+  ///                     parameter e.g 'some Collection'.
+  /// \param opaqueTypeRepr The TypeRepr of an opaque generic parameter.
+  /// \param nameLoc The location of the name.
+  /// \param ellipsisLoc The location of the ellipsis for a type parameter pack.
+  ///
+  static GenericTypeParamDecl *
+  createImplicit(DeclContext *dc, Identifier name, unsigned depth,
+                 unsigned index, bool isParameterPack = false,
+                 bool isOpaqueType = false, TypeRepr *opaqueTypeRepr = nullptr,
+                 SourceLoc nameLoc = SourceLoc(),
+                 SourceLoc ellipsisLoc = SourceLoc());
 
   /// The depth of this generic type parameter, i.e., the number of outer
   /// levels of generic parameter lists that enclose this type parameter.
@@ -3224,13 +3317,13 @@ public:
   }
 
   /// Returns \c true if this generic type parameter is declared as a type
-  /// sequence.
+  /// parameter pack.
   ///
   /// \code
-  /// func foo<@_typeSequence T>(_ : T...) { }
-  /// struct Foo<@_typeSequence T> { }
+  /// func foo<T...>(_ : T...) { }
+  /// struct Foo<T...> { }
   /// \endcode
-  bool isTypeSequence() const { return Bits.GenericTypeParamDecl.TypeSequence; }
+  bool isParameterPack() const { return Bits.GenericTypeParamDecl.ParameterPack; }
 
   /// Determine whether this generic parameter represents an opaque type.
   ///
@@ -3267,6 +3360,14 @@ public:
   ///
   /// Here 'T' and 'U' have indexes 0 and 1, respectively. 'V' has index 0.
   unsigned getIndex() const { return Bits.GenericTypeParamDecl.Index; }
+
+  /// Retrieve the ellipsis location for a type parameter pack \c T...
+  SourceLoc getEllipsisLoc() const {
+    if (!isParameterPack())
+      return SourceLoc();
+
+    return *getTrailingObjects<SourceLoc>();
+  }
 
   SourceLoc getStartLoc() const { return getNameLoc(); }
   SourceRange getSourceRange() const;
@@ -8238,7 +8339,7 @@ inline bool Decl::isSyntacticallyOverridable() const {
 }
 
 inline GenericParamKey::GenericParamKey(const GenericTypeParamDecl *d)
-    : TypeSequence(d->isTypeSequence()), Depth(d->getDepth()),
+    : ParameterPack(d->isParameterPack()), Depth(d->getDepth()),
       Index(d->getIndex()) {}
 
 inline const GenericContext *Decl::getAsGenericContext() const {
@@ -8297,6 +8398,10 @@ ParameterList *getParameterList(ValueDecl *source);
 /// Retrieve the parameter list for a given declaration context, or nullptr if
 /// there is none.
 ParameterList *getParameterList(DeclContext *source);
+
+/// Retrieve parameter declaration from the given source at given index, or
+/// nullptr if the source does not have a parameter list.
+const ParamDecl *getParameterAt(ConcreteDeclRef declRef, unsigned index);
 
 /// Retrieve parameter declaration from the given source at given index, or
 /// nullptr if the source does not have a parameter list.

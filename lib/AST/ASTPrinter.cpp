@@ -1684,9 +1684,6 @@ void PrintAST::printSingleDepthOfGenericSignature(
     llvm::interleave(
         genericParams,
         [&](GenericTypeParamType *param) {
-          if (param->isTypeSequence())
-            Printer.printAttrName("@_typeSequence ");
-
           if (!subMap.empty()) {
             printType(substParam(param));
           } else if (auto *GP = param->getDecl()) {
@@ -1699,6 +1696,8 @@ void PrintAST::printSingleDepthOfGenericSignature(
           } else {
             printType(param);
           }
+          if (param->isParameterPack())
+            Printer << "...";
         },
         [&] { Printer << ", "; });
   }
@@ -3502,9 +3501,9 @@ void PrintAST::visitTypeAliasDecl(TypeAliasDecl *decl) {
 
 void PrintAST::visitGenericTypeParamDecl(GenericTypeParamDecl *decl) {
   recordDeclLoc(decl, [&] {
-    if (decl->isTypeSequence())
-      Printer.printAttrName("@_typeSequence ");
     Printer.printName(decl->getName(), PrintNameContext::GenericParameter);
+    if (decl->isParameterPack())
+      Printer << "...";
   });
 
   printInherited(decl);
@@ -4584,12 +4583,6 @@ void PrintAST::visitTupleExpr(TupleExpr *expr) {
   Printer << ")";
 }
 
-void PrintAST::visitPackExpr(PackExpr *expr) {
-}
-
-void PrintAST::visitReifyPackExpr(ReifyPackExpr *expr) {
-}
-
 void PrintAST::visitTypeJoinExpr(TypeJoinExpr *expr) {
 }
 
@@ -5552,7 +5545,7 @@ public:
   }
 
   void visitPackType(PackType *T) {
-    Printer << "(";
+    Printer << "Pack{";
 
     auto Fields = T->getElementTypes();
     for (unsigned i = 0, e = Fields.size(); i != e; ++i) {
@@ -5561,7 +5554,7 @@ public:
       Type EltType = Fields[i];
       visit(EltType);
     }
-    Printer << ")";
+    Printer << "}";
   }
 
   void visitPackExpansionType(PackExpansionType *T) {
@@ -6490,7 +6483,7 @@ public:
     }
   }
 
-  void visitSequenceArchetypeType(SequenceArchetypeType *T) {
+  void visitPackArchetypeType(PackArchetypeType *T) {
     printArchetypeCommon(T);
   }
 

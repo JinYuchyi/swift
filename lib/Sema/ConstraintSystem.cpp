@@ -1735,8 +1735,12 @@ TypeVariableType *ConstraintSystem::openGenericParameter(
   auto *paramLocator = getConstraintLocator(
       locator.withPathElement(LocatorPathElt::GenericParameter(parameter)));
 
-  auto typeVar = createTypeVariable(paramLocator, TVO_PrefersSubtypeBinding |
-                                                      TVO_CanBindToHole);
+  unsigned options = (TVO_PrefersSubtypeBinding |
+                      TVO_CanBindToHole);
+  if (parameter->isParameterPack())
+    options |= TVO_CanBindToPack;
+
+  auto typeVar = createTypeVariable(paramLocator, options);
   auto result = replacements.insert(std::make_pair(
       cast<GenericTypeParamType>(parameter->getCanonicalType()), typeVar));
 
@@ -6042,7 +6046,6 @@ ConstraintSystem::isConversionEphemeral(ConversionRestrictionKind conversion,
   case ConversionRestrictionKind::ObjCTollFreeBridgeToCF:
   case ConversionRestrictionKind::CGFloatToDouble:
   case ConversionRestrictionKind::DoubleToCGFloat:
-  case ConversionRestrictionKind::ReifyPackToType:
     // @_nonEphemeral has no effect on these conversions, so treat them as all
     // being non-ephemeral in order to allow their passing to an @_nonEphemeral
     // parameter.
